@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Project Milestones (Supabase)</title>
+  <title>Project Milestones (Supabase Auto-Save)</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/@supabase/supabase-js"></script>
 </head>
@@ -34,15 +34,17 @@
     const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
     let currentProject = null;
+    let milestonesCache = [];  // local cache of milestones
+    let dirty = false;         // tracks unsaved changes
+
     const projectSelect = document.getElementById("projectSelect");
     const milestonesDiv = document.getElementById("milestones");
 
-    // 📌 Load all project names
+    // 📌 Load all projects
     async function loadProjects() {
       const { data, error } = await supabaseClient
         .from("milestones")
-        .select("project")
-        .order("project");
+        .select("project");
 
       if (error) { console.error(error); return; }
 
@@ -76,44 +78,56 @@
       renderMilestones();
     });
 
-    // 📌 Load milestones for current project
+    // 📌 Load milestones
     async function fetchMilestones() {
       if (!currentProject) return [];
       const { data, error } = await supabaseClient
         .from("milestones")
         .select("*")
-        .eq("project", currentProject)
-        .order("target_date", { ascending: true });
+        .eq("project", currentProject);
 
       if (error) { console.error(error); return []; }
-      return data;
+      milestonesCache = data;
+      return milestonesCache;
     }
 
-    // 📌 Add milestone
+    // 📌 Add milestone (save immediately)
     async function addMilestone(parentId = null) {
       const input = document.getElementById("newMilestone");
       const text = input.value.trim();
       if (!text || !currentProject) return;
 
-      const { error } = await supabaseClient
+      const { data, error } = await supabaseClient
         .from("milestones")
-        .insert([{ project: currentProject, text, parent_id: parentId, completed: false }]);
+        .insert([{ project: currentProject, text, parent_id: parentId, completed: false }])
+        .select();
 
-      if (error) console.error(error);
+      if (!error && data.length > 0) {
+        milestonesCache.push(data[0]);
+        renderMilestones();
+      }
       input.value = "";
     }
 
-    // 📌 Update milestone fields
-    async function updateMilestone(id, updates) {
+    // 📌 Update milestone locally (auto-saved later)
+    function updateLocal(id, updates) {
+      let m = milestonesCache.find(x => x.id === id);
+      if (m) {
+        Object.assign(m, updates);
+        dirty = true; // mark unsaved
+      }
+    }
+
+    // 📌 Save immediately (for critical actions)
+    async function saveNow(id, updates) {
       const { error } = await supabaseClient
         .from("milestones")
         .update(updates)
         .eq("id", id);
-
       if (error) console.error(error);
     }
 
-    // 📌 Delete milestone
+    // 📌 Delete milestone (immediate)
     async function deleteMilestone(id) {
       if (!confirm("Delete this milestone (and its sub-milestones)?")) return;
       const { error } = await supabaseClient
@@ -122,11 +136,36 @@
         .eq("id", id);
 
       if (error) console.error(error);
+      else {
+        milestonesCache = milestonesCache.filter(m => m.id !== id && m.parent_id !== id);
+        renderMilestones();
+      }
     }
 
-    // 📌 Render milestones as nested tree
+    // 📌 Auto-save loop
+    setInterval(async () => {
+      if (dirty) {
+        console.log("Auto-saving changes...");
+        for (let m of milestonesCache) {
+          const { error } = await supabaseClient
+            .from("milestones")
+            .update({
+              text: m.text,
+              notes: m.notes,
+              target_date: m.target_date,
+              completed: m.completed,
+              completed_date: m.completed_date
+            })
+            .eq("id", m.id);
+          if (error) console.error(error);
+        }
+        dirty = false;
+      }
+    }, 5000); // every 5 seconds
+
+    // 📌 Render milestones
     async function renderMilestones() {
-      const data = await fetchMilestones();
+      await fetchMilestones();
       milestonesDiv.innerHTML = "";
 
       function buildTree(items, parentId = null) {
@@ -134,7 +173,7 @@
                     .map(m => ({ ...m, children: buildTree(items, m.id) }));
       }
 
-      const tree = buildTree(data);
+      const tree = buildTree(milestonesCache);
 
       function createList(items, parentEl) {
         items.forEach(m => {
@@ -161,20 +200,14 @@
             <div class="ml-6 mt-2 space-y-2"></div>
           `;
 
-          // Bind events
+          // ✅ Critical: Save immediately
           row.querySelector("input[type=checkbox]").addEventListener("change", e => {
-            updateMilestone(m.id, { 
+            updateLocal(m.id, { 
               completed: e.target.checked,
               completed_date: e.target.checked ? new Date().toISOString().split("T")[0] : null
             });
-          });
-
-          row.querySelector("input[type=date]").addEventListener("change", e => {
-            updateMilestone(m.id, { target_date: e.target.value });
-          });
-
-          row.querySelector("textarea").addEventListener("input", e => {
-            updateMilestone(m.id, { notes: e.target.value });
+            saveNow(m.id, { completed: e.target.checked, completed_date: e.target.checked ? new Date().toISOString().split("T")[0] : null });
+            renderMilestones();
           });
 
           row.querySelector("button.bg-gray-200").addEventListener("click", () => {
@@ -184,6 +217,15 @@
 
           row.querySelector("button.bg-red-500").addEventListener("click", () => {
             deleteMilestone(m.id);
+          });
+
+          // 📝 Non-critical: update locally only, auto-saved later
+          row.querySelector("input[type=date]").addEventListener("change", e => {
+            updateLocal(m.id, { target_date: e.target.value });
+          });
+
+          row.querySelector("textarea").addEventListener("input", e => {
+            updateLocal(m.id, { notes: e.target.value });
           });
 
           let childContainer = row.querySelector("div.ml-6");
@@ -196,23 +238,8 @@
       createList(tree, milestonesDiv);
     }
 
-    // 📌 Real-time updates
-supabaseClient
-  .channel("milestones-changes")
-  .on(
-    "postgres_changes",
-    { event: "*", schema: "public", table: "milestones" },
-    (payload) => {
-      console.log("Realtime update:", payload);
-      renderMilestones();
-    }
-  )
-  .subscribe();
-
     // Initial load
     loadProjects();
   </script>
 </body>
 </html>
-
-
