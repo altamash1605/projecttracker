@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Project Milestones (Supabase)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/@supabase/supabase-js"></script>
+</head>
+<body class="bg-gray-100 min-h-screen p-6">
+  <div class="max-w-5xl mx-auto">
+    <h1 class="text-3xl font-bold mb-6">📌 Project Milestones</h1>
+
+    <!-- Project Selector -->
+    <div class="mb-6 flex items-center gap-3">
+      <select id="projectSelect" class="p-2 border rounded bg-white"></select>
+      <input id="newProjectName" placeholder="New project name" class="p-2 border rounded">
+      <button onclick="addProject()" class="px-3 py-2 bg-black text-white rounded">+ Add Project</button>
+    </div>
+
+    <!-- Milestones List -->
+    <div id="milestones" class="space-y-3"></div>
+
+    <!-- Add Milestone -->
+    <div class="mt-6 flex gap-3">
+      <input id="newMilestone" placeholder="New milestone" class="flex-1 p-2 border rounded">
+      <button onclick="addMilestone()" class="px-4 py-2 bg-black text-white rounded">+ Add</button>
+    </div>
+  </div>
+
+  <script>
+    // 🔑 Replace with your Supabase credentials
+    const SUPABASE_URL = "https://YOUR_PROJECT_ID.supabase.co";
+    const SUPABASE_ANON_KEY = "YOUR_ANON_KEY";
+    const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    let currentProject = null;
+    const projectSelect = document.getElementById("projectSelect");
+    const milestonesDiv = document.getElementById("milestones");
+
+    // 📌 Load all project names
+    async function loadProjects() {
+      const { data, error } = await supabaseClient
+        .from("milestones")
+        .select("project")
+        .order("project");
+
+      if (error) { console.error(error); return; }
+
+      const projects = [...new Set(data.map(m => m.project))];
+      projectSelect.innerHTML = "";
+      projects.forEach(p => {
+        let opt = document.createElement("option");
+        opt.value = p;
+        opt.textContent = p;
+        projectSelect.appendChild(opt);
+      });
+
+      if (!currentProject && projects.length > 0) {
+        currentProject = projects[0];
+      }
+      if (currentProject) projectSelect.value = currentProject;
+
+      renderMilestones();
+    }
+
+    async function addProject() {
+      const name = document.getElementById("newProjectName").value.trim();
+      if (!name) return;
+      currentProject = name;
+      document.getElementById("newProjectName").value = "";
+      await loadProjects();
+    }
+
+    projectSelect.addEventListener("change", e => {
+      currentProject = e.target.value;
+      renderMilestones();
+    });
+
+    // 📌 Load milestones for current project
+    async function fetchMilestones() {
+      if (!currentProject) return [];
+      const { data, error } = await supabaseClient
+        .from("milestones")
+        .select("*")
+        .eq("project", currentProject)
+        .order("target_date", { ascending: true });
+
+      if (error) { console.error(error); return []; }
+      return data;
+    }
+
+    // 📌 Add milestone
+    async function addMilestone(parentId = null) {
+      const input = document.getElementById("newMilestone");
+      const text = input.value.trim();
+      if (!text || !currentProject) return;
+
+      const { error } = await supabaseClient
+        .from("milestones")
+        .insert([{ project: currentProject, text, parent_id: parentId, completed: false }]);
+
+      if (error) console.error(error);
+      input.value = "";
+    }
+
+    // 📌 Update milestone fields
+    async function updateMilestone(id, updates) {
+      const { error } = await supabaseClient
+        .from("milestones")
+        .update(updates)
+        .eq("id", id);
+
+      if (error) console.error(error);
+    }
+
+    // 📌 Delete milestone
+    async function deleteMilestone(id) {
+      if (!confirm("Delete this milestone (and its sub-milestones)?")) return;
+      const { error } = await supabaseClient
+        .from("milestones")
+        .delete()
+        .eq("id", id);
+
+      if (error) console.error(error);
+    }
+
+    // 📌 Render milestones as nested tree
+    async function renderMilestones() {
+      const data = await fetchMilestones();
+      milestonesDiv.innerHTML = "";
+
+      function buildTree(items, parentId = null) {
+        return items.filter(m => m.parent_id === parentId)
+                    .map(m => ({ ...m, children: buildTree(items, m.id) }));
+      }
+
+      const tree = buildTree(data);
+
+      function createList(items, parentEl) {
+        items.forEach(m => {
+          let row = document.createElement("div");
+          row.className = "bg-white p-3 rounded shadow";
+          row.innerHTML = `
+            <div class="flex items-center justify-between">
+              <div>
+                <input type="checkbox" ${m.completed ? "checked" : ""} class="mr-2">
+                <span class="${m.completed ? 'line-through text-gray-500' : ''}">${m.text}</span>
+                ${m.completed && m.completed_date ? `<span class="text-xs text-green-600 ml-2">(✔ ${m.completed_date})</span>` : ""}
+              </div>
+              <div class="flex gap-2">
+                <button class="text-sm px-2 py-1 bg-gray-200 rounded">+ Sub</button>
+                <button class="text-sm px-2 py-1 bg-red-500 text-white rounded">🗑 Delete</button>
+              </div>
+            </div>
+            <div class="mt-2 flex items-center gap-2">
+              <label class="text-xs text-gray-600">🎯 Target:</label>
+              <input type="date" value="${m.target_date || ""}" class="p-1 border rounded text-sm">
+            </div>
+            <textarea placeholder="Notes/updates..."
+                      class="w-full mt-2 p-2 border rounded text-sm">${m.notes || ""}</textarea>
+            <div class="ml-6 mt-2 space-y-2"></div>
+          `;
+
+          // Bind events
+          row.querySelector("input[type=checkbox]").addEventListener("change", e => {
+            updateMilestone(m.id, { 
+              completed: e.target.checked,
+              completed_date: e.target.checked ? new Date().toISOString().split("T")[0] : null
+            });
+          });
+
+          row.querySelector("input[type=date]").addEventListener("change", e => {
+            updateMilestone(m.id, { target_date: e.target.value });
+          });
+
+          row.querySelector("textarea").addEventListener("input", e => {
+            updateMilestone(m.id, { notes: e.target.value });
+          });
+
+          row.querySelector("button.bg-gray-200").addEventListener("click", () => {
+            let subName = prompt("Enter sub-milestone:");
+            if (subName) addMilestone(m.id, subName);
+          });
+
+          row.querySelector("button.bg-red-500").addEventListener("click", () => {
+            deleteMilestone(m.id);
+          });
+
+          let childContainer = row.querySelector("div.ml-6");
+          createList(m.children, childContainer);
+
+          parentEl.appendChild(row);
+        });
+      }
+
+      createList(tree, milestonesDiv);
+    }
+
+    // 📌 Real-time updates
+    supabaseClient
+      .channel("milestones")
+      .on("postgres_changes", { event: "*", schema: "public", table: "milestones" }, payload => {
+        renderMilestones();
+        loadProjects();
+      })
+      .subscribe();
+
+    // Initial load
+    loadProjects();
+  </script>
+</body>
+</html>
