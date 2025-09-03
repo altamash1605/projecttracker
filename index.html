@@ -197,17 +197,22 @@
     }
 
     // 📌 Real-time updates
-    supabaseClient
-      .channel("milestones")
-      .on("postgres_changes", { event: "*", schema: "public", table: "milestones" }, payload => {
-        renderMilestones();
-        loadProjects();
-      })
-      .subscribe();
+supabaseClient
+  .channel("milestones-changes")
+  .on(
+    "postgres_changes",
+    { event: "*", schema: "public", table: "milestones" },
+    (payload) => {
+      console.log("Realtime update:", payload);
+      renderMilestones();
+    }
+  )
+  .subscribe();
 
     // Initial load
     loadProjects();
   </script>
 </body>
 </html>
+
 
