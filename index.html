@@ -9,6 +9,8 @@
 <body class="bg-gray-100 min-h-screen p-6">
   <div class="max-w-5xl mx-auto">
     <h1 class="text-3xl font-bold mb-6">📌 Project Milestones</h1>
+    <div id="saveStatus" class="text-sm text-gray-500 mb-4"></div>
+
 
     <!-- Project Selector -->
     <div class="mb-6 flex items-center gap-3">
@@ -154,26 +156,39 @@ async function addProject() {
       }
     }
 
-    // 📌 Auto-save loop
-    setInterval(async () => {
-      if (dirty) {
-        console.log("Auto-saving changes...");
-        for (let m of milestonesCache) {
-          const { error } = await supabaseClient
-            .from("milestones")
-            .update({
-              text: m.text,
-              notes: m.notes,
-              target_date: m.target_date,
-              completed: m.completed,
-              completed_date: m.completed_date
-            })
-            .eq("id", m.id);
-          if (error) console.error(error);
-        }
-        dirty = false;
-      }
-    }, 5000); // every 5 seconds
+setInterval(async () => {
+  if (dirty) {
+    const statusEl = document.getElementById("saveStatus");
+    statusEl.textContent = "💾 Saving...";
+    statusEl.className = "text-sm text-blue-500 mb-4";
+
+    for (let m of milestonesCache) {
+      const { error } = await supabaseClient
+        .from("milestones")
+        .update({
+          text: m.text,
+          notes: m.notes,
+          target_date: m.target_date,
+          completed: m.completed,
+          completed_date: m.completed_date
+        })
+        .eq("id", m.id);
+      if (error) console.error(error);
+    }
+
+    dirty = false;
+
+    // Show success
+    statusEl.textContent = "✅ All changes saved";
+    statusEl.className = "text-sm text-green-600 mb-4";
+
+    // Fade out after 2 seconds
+    setTimeout(() => {
+      statusEl.textContent = "";
+    }, 2000);
+  }
+}, 5000);
+
 
     // 📌 Render milestones
     async function renderMilestones() {
@@ -255,4 +270,5 @@ async function addProject() {
   </script>
 </body>
 </html>
+
 
