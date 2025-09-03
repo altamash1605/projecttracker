@@ -65,13 +65,25 @@
       renderMilestones();
     }
 
-    async function addProject() {
-      const name = document.getElementById("newProjectName").value.trim();
-      if (!name) return;
-      currentProject = name;
-      document.getElementById("newProjectName").value = "";
-      await loadProjects();
-    }
+async function addProject() {
+  const name = document.getElementById("newProjectName").value.trim();
+  if (!name) return;
+
+  // Insert a dummy milestone so project exists in DB
+  const { error } = await supabaseClient
+    .from("milestones")
+    .insert([{ project: name, text: "New project created", completed: false }]);
+
+  if (error) {
+    console.error("Error creating project:", error);
+    return;
+  }
+
+  currentProject = name;
+  document.getElementById("newProjectName").value = "";
+  await loadProjects();
+}
+
 
     projectSelect.addEventListener("change", e => {
       currentProject = e.target.value;
@@ -243,3 +255,4 @@
   </script>
 </body>
 </html>
+
